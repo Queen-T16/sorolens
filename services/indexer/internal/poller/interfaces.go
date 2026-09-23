@@ -83,8 +83,8 @@ type TransactionResult struct {
 
 // Contract mirrors store.Contract (fields the poller needs).
 type Contract struct {
-	ID     string
-	Status string
+	ID      string
+	Status  string
 	Network string
 }
 
@@ -92,6 +92,7 @@ type Contract struct {
 type Event struct {
 	ID               string
 	ContractID       string
+	Network          string
 	Ledger           uint32
 	LedgerClosedAt   time.Time
 	TxHash           string
@@ -105,6 +106,7 @@ type Event struct {
 type Invocation struct {
 	TxHash           string
 	ContractID       string
+	Network          string
 	Ledger           uint32
 	LedgerClosedAt   time.Time
 	Status           string

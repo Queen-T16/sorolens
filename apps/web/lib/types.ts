@@ -124,6 +124,7 @@ export type AlertSeverity = "Info" | "Warning" | "Critical";
 
 export interface MonitoredContract {
   contract_id: string;
+  network: string;
   name: string;
   owner: string;
   status: HealthStatus;
@@ -173,23 +174,27 @@ export interface WatchdogStats {
   critical_alerts: number;
 }
 
-export interface AlertSubscription {
-  id: string;
-  contract_id: string;
-  webhook_url: string;
-  severity_filter: string;
-  created_at: string;
-  updated_at: string;
+// ---- snapshot / replay ------------------------------------------------------
+
+export interface SnapshotStorageEntry extends StorageEntry {
+  network: string;
 }
 
-export interface CreateSubscriptionRequest {
+export interface ContractSnapshot {
   contract_id: string;
-  webhook_url: string;
-  severity_filter?: string;
-}
-
-export interface SubscriptionsResponse {
-  subscriptions: AlertSubscription[];
+  network: string;
+  ledger: number;
+  first_tracked_ledger: number;
+  storage: SnapshotStorageEntry[];
+  last_event: {
+    id: string;
+    ledger: number;
+    tx_hash: string;
+    type: string;
+    ledger_closed_at: string;
+    value_decoded: unknown;
+    value_xdr: string;
+  } | null;
 }
 
 export interface GlobalStats {

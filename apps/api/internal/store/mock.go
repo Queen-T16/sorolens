@@ -3,37 +3,35 @@ package store
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 )
 
 // MockStore is an in-memory Store + QueryStore implementation for unit tests.
 type MockStore struct {
-	contracts           map[string]Contract
-	events              []Event
-	invocations         []Invocation
-	storageEntries      []StorageEntry
-	syncStates          map[string]SyncState
-	globalStats         GlobalStats
-	monitored           map[string]MonitoredContract
-	healthChecks        []HealthCheck
-	alerts              []ContractAlert
-	alertSubscriptions  []AlertSubscription
-	watchlist           map[string]map[string]bool
+	contracts      map[string]Contract
+	events         []Event
+	invocations    []Invocation
+	storageEntries []StorageEntry
+	syncStates     map[string]SyncState
+	globalStats    GlobalStats
+	monitored      map[string]MonitoredContract
+	healthChecks   []HealthCheck
+	alerts         []ContractAlert
+	apiKeys        []APIKey
 
 	// Error injection
-	UpsertContractErr        error
-	GetContractErr           error
-	ListContractsErr         error
-	GetGlobalStatsErr        error
-	ListEventsErr            error
-	ListInvocationsErr       error
-	ListStorageErr           error
-	GetContractStatsErr      error
-	RecentEventsErr          error
-	CreateAlertSubErr        error
-	ListAlertSubsByContractErr error
-	DeleteAlertSubErr        error
-	ListAllAlertSubsErr      error
+	UpsertContractErr   error
+	GetContractErr      error
+	ListContractsErr    error
+	GetGlobalStatsErr   error
+	ListEventsErr       error
+	ListInvocationsErr  error
+	ListStorageErr      error
+	GetContractStatsErr error
+	RecentEventsErr     error
+	CreateAPIKeyErr     error
+	GetAPIKeyErr        error
 }
 
 // NewMockStore returns an initialized MockStore.
@@ -72,7 +70,7 @@ func (m *MockStore) GetContract(_ context.Context, contractID string) (Contract,
 	return c, nil
 }
 
-func (m *MockStore) ListContracts(_ context.Context, cursor string, limit int) ([]Contract, string, error) {
+func (m *MockStore) ListContracts(_ context.Context, cursor string, limit int, f ContractFilters) ([]Contract, string, error) {
 	if m.ListContractsErr != nil {
 		return nil, "", m.ListContractsErr
 	}
@@ -81,10 +79,18 @@ func (m *MockStore) ListContracts(_ context.Context, cursor string, limit int) (
 	}
 	var out []Contract
 	for _, c := range m.contracts {
-		if cursor == "" || c.ID > cursor {
-			out = append(out, c)
+		if cursor != "" && c.ID <= cursor {
+			continue
 		}
+		if f.Network != "" && c.Network != f.Network {
+			continue
+		}
+		if f.Status != "" && c.Status != f.Status {
+			continue
+		}
+		out = append(out, c)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	var nextCursor string
 	if len(out) > limit {
 		nextCursor = out[limit-1].ID
@@ -154,6 +160,9 @@ func (m *MockStore) ListEvents(_ context.Context, contractID, cursor string, lim
 		if cursor != "" && e.ID <= cursor {
 			continue
 		}
+		if f.Network != "" && e.Network != f.Network {
+			continue
+		}
 		if f.Type != "" && e.Type != f.Type {
 			continue
 		}
@@ -170,7 +179,7 @@ func (m *MockStore) ListEvents(_ context.Context, contractID, cursor string, lim
 	return out, nextCursor, nil
 }
 
-func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string, limit int, _ InvocationFilters) ([]Invocation, string, error) {
+func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string, limit int, f InvocationFilters) ([]Invocation, string, error) {
 	if m.ListInvocationsErr != nil {
 		return nil, "", m.ListInvocationsErr
 	}
@@ -183,6 +192,9 @@ func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string
 			continue
 		}
 		if cursor != "" && inv.TxHash <= cursor {
+			continue
+		}
+		if f.Network != "" && inv.Network != f.Network {
 			continue
 		}
 		out = append(out, inv)
@@ -198,7 +210,7 @@ func (m *MockStore) ListInvocations(_ context.Context, contractID, cursor string
 	return out, nextCursor, nil
 }
 
-func (m *MockStore) ListStorageEntries(_ context.Context, contractID, cursor string, limit int, _ StorageFilters) ([]StorageEntry, string, error) {
+func (m *MockStore) ListStorageEntries(_ context.Context, contractID, cursor string, limit int, f StorageFilters) ([]StorageEntry, string, error) {
 	if m.ListStorageErr != nil {
 		return nil, "", m.ListStorageErr
 	}
@@ -211,6 +223,9 @@ func (m *MockStore) ListStorageEntries(_ context.Context, contractID, cursor str
 			continue
 		}
 		if cursor != "" && se.KeyXDR <= cursor {
+			continue
+		}
+		if f.Network != "" && se.Network != f.Network {
 			continue
 		}
 		out = append(out, se)
@@ -271,80 +286,155 @@ func (m *MockStore) RecentEvents(_ context.Context, contractID string, limit int
 	return out, nil
 }
 
-func (m *MockStore) GetPartitionStats(_ context.Context) ([]PartitionStats, error) {
-	return nil, nil
-}
+// ---- store.QueryStore snapshot helpers --------------------------------------
 
-// ---- store.WatchlistStore --------------------------------------------
-
-func (m *MockStore) AddToWatchlist(_ context.Context, userID, contractID string) error {
-	if m.watchlist[userID] == nil {
-		m.watchlist[userID] = make(map[string]bool)
-	}
-	m.watchlist[userID][contractID] = true
-	return nil
-}
-
-func (m *MockStore) RemoveFromWatchlist(_ context.Context, userID, contractID string) error {
-	if m.watchlist[userID] != nil {
-		delete(m.watchlist[userID], contractID)
-	}
-	return nil
-}
-
-func (m *MockStore) ListWatchlist(_ context.Context, userID string) ([]string, error) {
-	var out []string
-	for cid := range m.watchlist[userID] {
-		out = append(out, cid)
-	}
-	return out, nil
-}
-
-func (m *MockStore) IsInWatchlist(_ context.Context, userID, contractID string) (bool, error) {
-	return m.watchlist[userID][contractID], nil
-}
-
-// ---- store.AlertSubscriptionStore -----------------------------------------
-
-func (m *MockStore) Create(_ context.Context, s AlertSubscription) error {
-	if m.CreateAlertSubErr != nil {
-		return m.CreateAlertSubErr
-	}
-	m.alertSubscriptions = append(m.alertSubscriptions, s)
-	return nil
-}
-
-func (m *MockStore) ListByContract(_ context.Context, contractID string) ([]AlertSubscription, error) {
-	if m.ListAlertSubsByContractErr != nil {
-		return nil, m.ListAlertSubsByContractErr
-	}
-	var out []AlertSubscription
-	for _, s := range m.alertSubscriptions {
-		if s.ContractID == contractID {
-			out = append(out, s)
+// ContractFirstLedger returns the earliest ledger with indexed data for the
+// contract, or 0 when there is none.
+func (m *MockStore) ContractFirstLedger(_ context.Context, contractID string) (uint32, error) {
+	var first uint32
+	set := false
+	for _, e := range m.events {
+		if e.ContractID != contractID {
+			continue
+		}
+		if !set || e.Ledger < first {
+			first = e.Ledger
+			set = true
 		}
 	}
+	for _, inv := range m.invocations {
+		if inv.ContractID != contractID {
+			continue
+		}
+		if !set || inv.Ledger < first {
+			first = inv.Ledger
+			set = true
+		}
+	}
+	return first, nil
+}
+
+// GetStorageSnapshot returns, per key, the version that was live at ledger.
+// Because storageEntries is append-only in the mock, historical versions are
+// preserved exactly as the indexer would have written them.
+func (m *MockStore) GetStorageSnapshot(_ context.Context, contractID string, ledger uint32) ([]StorageEntry, error) {
+	best := make(map[string]StorageEntry)
+	for _, se := range m.storageEntries {
+		if se.ContractID != contractID {
+			continue
+		}
+		// Not written yet at this ledger.
+		if se.LastModifiedLedger > int64(ledger) {
+			continue
+		}
+		// TTL had already expired at this ledger.
+		if se.LiveUntilLedger > 0 && se.LiveUntilLedger < int64(ledger) {
+			continue
+		}
+		prev, ok := best[se.KeyXDR]
+		if !ok || se.LastModifiedLedger >= prev.LastModifiedLedger {
+			best[se.KeyXDR] = se
+		}
+	}
+	out := make([]StorageEntry, 0, len(best))
+	for _, se := range best {
+		out = append(out, se)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].KeyXDR < out[j].KeyXDR })
 	return out, nil
 }
 
-func (m *MockStore) Delete(_ context.Context, id string) error {
-	if m.DeleteAlertSubErr != nil {
-		return m.DeleteAlertSubErr
+// LastEventAtOrBefore returns the most recent event with ledger <= ledger.
+func (m *MockStore) LastEventAtOrBefore(_ context.Context, contractID string, ledger uint32) (Event, error) {
+	var latest Event
+	found := false
+	for _, e := range m.events {
+		if e.ContractID != contractID || e.Ledger > ledger {
+			continue
+		}
+		if !found || e.Ledger >= latest.Ledger {
+			latest = e
+			found = true
+		}
 	}
-	for i, s := range m.alertSubscriptions {
-		if s.ID == id {
-			m.alertSubscriptions = append(m.alertSubscriptions[:i], m.alertSubscriptions[i+1:]...)
+	if !found {
+		return Event{}, ErrNotFound
+	}
+	return latest, nil
+}
+
+// ---- store.APIKeyStore ------------------------------------------------------
+
+// AddAPIKey is a test helper that seeds an API key directly.
+func (m *MockStore) AddAPIKey(k APIKey) {
+	m.apiKeys = append(m.apiKeys, k)
+}
+
+func (m *MockStore) CreateAPIKey(_ context.Context, k APIKey) error {
+	if m.CreateAPIKeyErr != nil {
+		return m.CreateAPIKeyErr
+	}
+	for _, scope := range k.Scopes {
+		if !ValidScopes[scope] {
+			return ErrInvalidScope
+		}
+	}
+	m.apiKeys = append(m.apiKeys, k)
+	return nil
+}
+
+func (m *MockStore) GetAPIKeyByHash(_ context.Context, hash string) (APIKey, error) {
+	if m.GetAPIKeyErr != nil {
+		return APIKey{}, m.GetAPIKeyErr
+	}
+	for _, k := range m.apiKeys {
+		if k.KeyHash == hash && !k.Revoked() {
+			return k, nil
+		}
+	}
+	return APIKey{}, ErrNotFound
+}
+
+func (m *MockStore) ListAPIKeys(_ context.Context, cursor string, limit int) ([]APIKey, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []APIKey
+	for _, k := range m.apiKeys {
+		if cursor != "" && k.ID <= cursor {
+			continue
+		}
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	var next string
+	if len(out) > limit {
+		next = out[limit-1].ID
+		out = out[:limit]
+	}
+	return out, next, nil
+}
+
+func (m *MockStore) RevokeAPIKey(_ context.Context, id string) error {
+	for i := range m.apiKeys {
+		if m.apiKeys[i].ID == id {
+			now := time.Now().UTC()
+			m.apiKeys[i].RevokedAt = &now
 			return nil
 		}
 	}
 	return ErrNotFound
 }
 
-func (m *MockStore) ListAll(_ context.Context) ([]AlertSubscription, error) {
-	if m.ListAllAlertSubsErr != nil {
-		return nil, m.ListAllAlertSubsErr
+func (m *MockStore) TouchAPIKey(_ context.Context, id string) error {
+	for i := range m.apiKeys {
+		if m.apiKeys[i].ID == id {
+			now := time.Now().UTC()
+			m.apiKeys[i].LastUsedAt = &now
+			return nil
+		}
 	}
-	return m.alertSubscriptions, nil
+	return nil
 }
 
 // ErrPing is returned by MockPinger when Healthy is false.

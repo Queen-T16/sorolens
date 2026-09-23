@@ -1,17 +1,21 @@
 /**
  * Sorolens contributor bot entry point.
  *
- * Boots the Discord client + Express webhook receiver in a single
- * process. Deployment targets are single-instance (Railway free tier,
- * a small VPS) so we do not need horizontal-scaling considerations.
+ * Boots the Discord client + Express HTTP server in a single process:
+ * - `/healthz` and `/webhook` for the GitHub webhook receiver.
+ * - `/oauth/start` and `/oauth/callback` for the one-click GitHub link.
+ * Deployment targets are single-instance (Render, Fly, a small VPS), so
+ * we do not need horizontal-scaling considerations.
  */
 
+import express from "express";
 import { Client, GatewayIntentBits } from "discord.js";
 import { config } from "./config.js";
 import { openDb } from "./db.js";
 import { initGithub } from "./github.js";
 import { registerHandlers } from "./commands.js";
-import { makeWebhookApp } from "./webhook.js";
+import { mountWebhookRoutes } from "./webhook.js";
+import { mountOauthRoutes } from "./oauth.js";
 
 async function main() {
   openDb(config.dbPath);
@@ -36,12 +40,13 @@ async function main() {
 
   await client.login(config.discordToken);
 
-  const app = makeWebhookApp({ client, config, tiers });
+  const app = express();
+  mountWebhookRoutes(app, { client, config, tiers });
+  mountOauthRoutes(app, { client, config, tiers });
   app.listen(config.port, () => {
-    console.log(`webhook listening on :${config.port}`);
+    console.log(`http listening on :${config.port}`);
   });
 
-  // Graceful shutdown.
   const stop = (signal: string) => {
     console.log(`Received ${signal}, shutting down...`);
     client.destroy().finally(() => process.exit(0));

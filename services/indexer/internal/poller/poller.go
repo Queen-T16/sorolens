@@ -232,7 +232,7 @@ func (p *Poller) processContract(ctx context.Context, contractID, network string
 	log.Info("indexing contract")
 
 	runStart := time.Now()
-	events, invocations, err := p.fetchWindow(ctx, rpc, contractID, startLedger, endLedger)
+	events, invocations, err := p.fetchWindow(ctx, rpc, contractID, network, startLedger, endLedger)
 	if err != nil {
 		return err
 	}
@@ -262,8 +262,9 @@ func (p *Poller) processContract(ctx context.Context, contractID, network string
 }
 
 // fetchWindow calls getEvents for [startLedger, endLedger] and fetches the
-// corresponding transactions for each unique tx hash.
-func (p *Poller) fetchWindow(ctx context.Context, rpc RPCClient, contractID string, startLedger, endLedger uint32) ([]Event, []Invocation, error) {
+// corresponding transactions for each unique tx hash. The contract's network
+// is stamped onto every row so multi-network queries can filter on it.
+func (p *Poller) fetchWindow(ctx context.Context, rpc RPCClient, contractID, network string, startLedger, endLedger uint32) ([]Event, []Invocation, error) {
 	filters := []EventFilter{{
 		Type:        "contract",
 		ContractIDs: []string{contractID},
@@ -282,6 +283,7 @@ func (p *Poller) fetchWindow(ctx context.Context, rpc RPCClient, contractID stri
 		events = append(events, Event{
 			ID:               re.ID,
 			ContractID:       re.ContractID,
+			Network:          network,
 			Ledger:           re.Ledger,
 			LedgerClosedAt:   closedAt,
 			TxHash:           re.TxHash,
@@ -307,6 +309,7 @@ func (p *Poller) fetchWindow(ctx context.Context, rpc RPCClient, contractID stri
 		invocations = append(invocations, Invocation{
 			TxHash:           txHash,
 			ContractID:       contractID,
+			Network:          network,
 			Ledger:           tx.Ledger,
 			LedgerClosedAt:   tx.LedgerClosedAt,
 			Status:           tx.Status,
